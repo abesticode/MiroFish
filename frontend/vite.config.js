@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
       allowedHosts: env.ALLOWED_HOST ? [env.ALLOWED_HOST] : undefined,
       proxy: {
         '/api': {
-          target: 'http://localhost:5099',
+          target: 'http://127.0.0.1:5099',
           changeOrigin: true,
           secure: false
         }
