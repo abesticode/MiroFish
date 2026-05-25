@@ -78,12 +78,25 @@ class LLMClient:
             
         Returns:
             Parsed JSON object"""
-        response = self.chat(
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"}
-        )
+        try:
+            response = self.chat(
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"}
+            )
+        except Exception as e:
+            if 'json_object' in str(e) or 'response_format' in str(e):
+                import logging
+                logging.getLogger(__name__).warning(f"Model does not support JSON object response format: {e}. Retrying without it.")
+                response = self.chat(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format=None
+                )
+            else:
+                raise
         # Clean markdown code block tags
         cleaned_response = response.strip()
         cleaned_response = re.sub(r'^```(?:json)?\s*\n?', '', cleaned_response, flags=re.IGNORECASE)
