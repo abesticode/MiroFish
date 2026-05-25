@@ -227,7 +227,7 @@ class ZepGraphMemoryUpdater:
     
     # Retry configuration
     MAX_RETRIES = 3
-    RETRY_DELAY = 2  # 秒
+    RETRY_DELAY = 2  # Second
     
     def __init__(self, graph_id: str, api_key: Optional[str] = None):
         """
