@@ -1462,7 +1462,7 @@ class SimulationRunner:
         if not ipc_client.check_env_alive():
             raise ValueError(f"The simulation environment is not running or has been closed, and Interview cannot be executed: {simulation_id}")
 
-        logger.info(f"发送Interview命令: simulation_id={simulation_id}, agent_id={agent_id}, platform={platform}")
+        logger.info(f"Send Interview command: simulation_id={simulation_id}, agent_id={agent_id}, platform={platform}")
 
         response = ipc_client.send_interview(
             agent_id=agent_id,

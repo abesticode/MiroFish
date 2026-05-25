@@ -126,7 +126,7 @@ class EdgeInfo:
     
     @property
     def is_expired(self) -> bool:
-        """Has it expired?""
+        """Has it expired?"""
         return self.expired_at is not None
     
     @property
@@ -1356,7 +1356,7 @@ Returns a list of subquestions in JSON format. """
             "1. Answer directly in natural language, do not use any tools\n"
             "2. Do not return JSON format or tool call format\n"
             "3. Do not use Markdown titles (such as #, ##, ###)\n"
-            "4. Answer one by one according to the question number. Each answer starts with "Question X:" (X is the question number)\n"
+            "4. Answer one by one according to the question number. Each answer starts with \"Question X:\" (X is the question number)\n"
             "5. Separate the answers to each question with a blank line\n"
             "6. Answers must be substantive and answer at least 2-3 sentences for each question\n\n"
         )
@@ -1695,7 +1695,7 @@ Please generate 3-5 interview questions. """
         for interview in interviews:
             interview_texts.append(f"【{interview.agent_name}（{interview.agent_role}）】\n{interview.response[:500]}")
         
-        quote_instruction = "Use quotation marks "" when quoting interviewees' if get_locale() == 'zh' else 'Use quotation marks "" when quoting interviewees'
+        quote_instruction = "Use quotation marks \"\" when quoting interviewees" if get_locale() == 'zh' else "Use quotation marks \"\" when quoting interviewees"
         system_prompt = f"""You are a professional news editor. Please generate an interview summary based on responses from multiple interviewees.
 
 Abstract requirements:

@@ -64,7 +64,7 @@ class AgentActivity:
     def _describe_create_post(self) -> str:
         content = self.action_args.get("content", "")
         if content:
-            return f"Published a post: "{content}""
+            return f'Published a post: "{content}"'
         return "Published a post"
     
     def _describe_like_post(self) -> str:
@@ -73,9 +73,9 @@ class AgentActivity:
         post_author = self.action_args.get("post_author_name", "")
         
         if post_content and post_author:
-            return f"Liked {post_author}'s post: "{post_content}""
+            return f'Liked {post_author}\'s post: "{post_content}"'
         elif post_content:
-            return f"Liked a post: "{post_content}""
+            return f'Liked a post: "{post_content}"'
         elif post_author:
             return f"Liked a post by {post_author}"
         return "Liked a post"
@@ -99,9 +99,9 @@ class AgentActivity:
         original_author = self.action_args.get("original_author_name", "")
         
         if original_content and original_author:
-            return f"Retweeted {original_author}'s post: "{original_content}""
+            return f'Retweeted {original_author}\'s post: "{original_content}"'
         elif original_content:
-            return f"Retweeted a post: "{original_content}""
+            return f'Retweeted a post: "{original_content}"'
         elif original_author:
             return f"Retweeted a post by {original_author}"
         return "Retweeted a post"
@@ -123,7 +123,7 @@ class AgentActivity:
             base = "Quotes a post"
         
         if quote_content:
-            base += f" and commented: "{quote_content}""
+            base += f' and commented: "{quote_content}"'
         return base
     
     def _describe_follow(self) -> str:
@@ -131,7 +131,7 @@ class AgentActivity:
         target_user_name = self.action_args.get("target_user_name", "")
         
         if target_user_name:
-            return f"Followed user "{target_user_name}""
+            return f'Followed user "{target_user_name}"'
         return "Follow a user"
     
     def _describe_create_comment(self) -> str:
@@ -146,8 +146,8 @@ class AgentActivity:
             elif post_content:
                 return f"在帖子「{post_content}」下评论道：「{content}」"
             elif post_author:
-                return f"Commented under {post_author}'s post: "{content}""
-            return f" commented: "{content}""
+                return f'Commented under {post_author}\'s post: "{content}"'
+            return f' commented: "{content}"'
         return "Posted a comment"
     
     def _describe_like_comment(self) -> str:
@@ -156,9 +156,9 @@ class AgentActivity:
         comment_author = self.action_args.get("comment_author_name", "")
         
         if comment_content and comment_author:
-            return f"Liked {comment_author}'s comment: "{comment_content}""
+            return f'Liked {comment_author}\'s comment: "{comment_content}"'
         elif comment_content:
-            return f"Liked a comment: "{comment_content}""
+            return f'Liked a comment: "{comment_content}"'
         elif comment_author:
             return f"Liked a comment by {comment_author}"
         return "Liked a comment"
@@ -169,9 +169,9 @@ class AgentActivity:
         comment_author = self.action_args.get("comment_author_name", "")
         
         if comment_content and comment_author:
-            return f"Disliked {comment_author}'s comment: "{comment_content}""
+            return f'Disliked {comment_author}\'s comment: "{comment_content}"'
         elif comment_content:
-            return f"Disliked a comment: "{comment_content}""
+            return f'Disliked a comment: "{comment_content}"'
         elif comment_author:
             return f"Disliked a comment by {comment_author}"
         return "disliked a comment"
@@ -184,7 +184,7 @@ class AgentActivity:
     def _describe_search_user(self) -> str:
         """Search users - including search keywords"""
         query = self.action_args.get("query", "") or self.action_args.get("username", "")
-        return f"Searched for user "{query}"" if query else "Searched for user"
+        return f'Searched for user "{query}"' if query else "Searched for user"
     
     def _describe_mute(self) -> str:
         """Block user - contains the name of the blocked user"""

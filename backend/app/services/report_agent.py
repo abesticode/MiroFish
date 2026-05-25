@@ -764,7 +764,8 @@ When you have obtained enough information through the tool, output the chapter c
    ```
 5. Maintain logical coherence with other chapters
 6. [Avoid repetition] Read the completed chapters below carefully and do not describe the same information repeatedly.
-7. [Again] Don’t add any titles! Replace section heading """ with **bold**
+7. [Again] Don't add any titles! Replace section heading with **bold**
+"""
 
 SECTION_USER_PROMPT_TEMPLATE = """\
 Completed chapter content (please read carefully to avoid repetition):

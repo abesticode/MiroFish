@@ -522,8 +522,8 @@ class SimulationManager:
             "instructions": (
                 f"1. Activate the conda environment: conda activate MiroFish\n"
                 f"2. Run simulation (script located in {scripts_dir}):\n"
-                f" - Run Twitter alone: ​​python {scripts_dir}/run_twitter_simulation.py --config {config_path}\n"
-                f" - Run Reddit alone: ​​python {scripts_dir}/run_reddit_simulation.py --config {config_path}\n"
+                f"- Run Twitter alone: ​​python {scripts_dir}/run_twitter_simulation.py --config {config_path}\n"
+                f"- Run Reddit alone: ​​python {scripts_dir}/run_reddit_simulation.py --config {config_path}\n"
                 f" - Run dual platforms in parallel: python {scripts_dir}/run_parallel_simulation.py --config {config_path}"
             )
         }

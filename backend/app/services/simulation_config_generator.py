@@ -540,50 +540,51 @@ class SimulationConfigGenerator:
         # Calculate the maximum allowed value (80% of the number of agents)
         max_agents_allowed = max(1, int(num_entities * 0.9))
         
-        prompt = f"""Generate time simulation configuration based on the following simulation requirements.
-
-{context_truncated}
-
-## Task
-Please generate time configuration JSON.
-
-### Basic principles (for reference only, need to be flexibly adjusted according to specific events and participating groups):
-- Please infer the time zone and work and rest habits of the target user group based on the simulation scenario. The following is a reference example for Dongba District (UTC+8)
-- Almost no one is active from 0 to 5 am (activity coefficient 0.05)
-- Gradually become active from 6 to 8 am (activity coefficient 0.4)
-- Moderately active during working hours from 9:00 to 18:00 (activity coefficient 0.7)
-- 19:00-22:00 is the peak period (activity coefficient 1.5)
-- Activity decreases after 23 o'clock (activity coefficient 0.5)
-- General pattern: low activity in the early morning, gradual increase in the morning, medium during working hours, peak in the evening
-- **Important**: The following example values ​​are for reference only. You need to adjust the specific time period according to the nature of the event and the characteristics of the participating groups.
-  - For example: the peak of the student population may be 21-23 o'clock; the media is active throughout the day; official agencies are only during working hours
-  - For example: sudden hot spots may lead to discussions late at night, and off_peak_hours can be shortened appropriately.
-
-### Return JSON format (no markdown required)
-
-Example:
-{{
-    "total_simulation_hours": 72,
-    "minutes_per_round": 60,
-    "agents_per_hour_min": 5,
-    "agents_per_hour_max": 50,
-    "peak_hours": [19, 20, 21, 22],
-    "off_peak_hours": [0, 1, 2, 3, 4, 5],
-    "morning_hours": [6, 7, 8],
-    "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
-    "reasoning": "Time configuration description for this event"
-}}
-
-Field description:
-- total_simulation_hours (int): total simulation time, 24-168 hours, short for emergencies and long for continuous topics
-- minutes_per_round (int): duration of each round, 30-120 minutes, 60 minutes recommended
-- agents_per_hour_min (int): The minimum number of activated agents per hour (value range: 1-{max_agents_allowed})
-- agents_per_hour_max (int): The maximum number of activated agents per hour (value range: 1-{max_agents_allowed})
-- peak_hours (int array): Peak hours, adjusted according to event participant groups
-- off_peak_hours (int array): low hours, usually late at night and early morning
-- morning_hours (int array): morning time period
-- work_hours (int array): working hours
-- reasoning (string): A brief explanation of why """ is configured this way
+        prompt = f"""Generate time simulation configuration based on the following simulation requirements.
+
+{context_truncated}
+
+## Task
+Please generate time configuration JSON.
+
+### Basic principles (for reference only, need to be flexibly adjusted according to specific events and participating groups):
+- Please infer the time zone and work and rest habits of the target user group based on the simulation scenario. The following is a reference example for Dongba District (UTC+8)
+- Almost no one is active from 0 to 5 am (activity coefficient 0.05)
+- Gradually become active from 6 to 8 am (activity coefficient 0.4)
+- Moderately active during working hours from 9:00 to 18:00 (activity coefficient 0.7)
+- 19:00-22:00 is the peak period (activity coefficient 1.5)
+- Activity decreases after 23 o'clock (activity coefficient 0.5)
+- General pattern: low activity in the early morning, gradual increase in the morning, medium during working hours, peak in the evening
+- **Important**: The following example values ​​are for reference only. You need to adjust the specific time period according to the nature of the event and the characteristics of the participating groups.
+  - For example: the peak of the student population may be 21-23 o'clock; the media is active throughout the day; official agencies are only during working hours
+  - For example: sudden hot spots may lead to discussions late at night, and off_peak_hours can be shortened appropriately.
+
+### Return JSON format (no markdown required)
+
+Example:
+{{
+    "total_simulation_hours": 72,
+    "minutes_per_round": 60,
+    "agents_per_hour_min": 5,
+    "agents_per_hour_max": 50,
+    "peak_hours": [19, 20, 21, 22],
+    "off_peak_hours": [0, 1, 2, 3, 4, 5],
+    "morning_hours": [6, 7, 8],
+    "work_hours": [9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    "reasoning": "Time configuration description for this event"
+}}
+
+Field description:
+- total_simulation_hours (int): total simulation time, 24-168 hours, short for emergencies and long for continuous topics
+- minutes_per_round (int): duration of each round, 30-120 minutes, 60 minutes recommended
+- agents_per_hour_min (int): The minimum number of activated agents per hour (value range: 1-{max_agents_allowed})
+- agents_per_hour_max (int): The maximum number of activated agents per hour (value range: 1-{max_agents_allowed})
+- peak_hours (int array): Peak hours, adjusted according to event participant groups
+- off_peak_hours (int array): low hours, usually late at night and early morning
+- morning_hours (int array): morning time period
+- work_hours (int array): working hours
+- reasoning (string): A brief explanation of why it is configured this way
+"""
 
         system_prompt = "You are a social media simulation expert. Return pure JSON format, and the time configuration must conform to the work and rest habits of the target user group in the simulation scenario."
         system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
