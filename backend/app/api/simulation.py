@@ -256,10 +256,11 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
     required_files = [
         "state.json",
         "simulation_config.json",
-        "reddit_profiles.json",
-        "twitter_profiles.csv"
     ]
-    
+
+    # At least one profile file must exist
+    profile_files = ["reddit_profiles.json", "twitter_profiles.csv"]
+
     # Check if the file exists
     existing_files = []
     missing_files = []
@@ -269,6 +270,17 @@ def _check_simulation_prepared(simulation_id: str) -> tuple:
             existing_files.append(f)
         else:
             missing_files.append(f)
+
+    # Check at least one profile file exists
+    has_profile = False
+    for f in profile_files:
+        file_path = os.path.join(simulation_dir, f)
+        if os.path.exists(file_path):
+            existing_files.append(f)
+            has_profile = True
+
+    if not has_profile:
+        missing_files.append("reddit_profiles.json or twitter_profiles.csv")
     
     if missing_files:
         return False, {
@@ -1513,8 +1525,28 @@ def start_simulation():
                 if state.status == SimulationStatus.RUNNING:
                     # Check if the simulated process is actually running
                     run_state = SimulationRunner.get_run_state(simulation_id)
+                    process_actually_running = False
+
                     if run_state and run_state.runner_status.value == "running":
-                        # The process is actually running
+                        # Verify process is actually alive (not killed by sleep/crash)
+                        import psutil
+                        pid = run_state.process_pid
+                        if pid and psutil.pid_exists(pid):
+                            process_actually_running = True
+                        else:
+                            logger.info(f"Simulation {simulation_id} process (PID={pid}) is dead, auto-resetting state")
+                            # Check if simulation had progress — if so, mark as stopped (not ready)
+                            if run_state.total_actions_count > 0 or run_state.current_round > 0:
+                                logger.info(f"Simulation had progress (round={run_state.current_round}, actions={run_state.total_actions_count}), marking as completed")
+                                state.status = SimulationStatus.COMPLETED
+                                manager._save_simulation_state(state)
+                                if not force:
+                                    return jsonify({
+                                        "success": False,
+                                        "error": "Simulation already completed (process exited with progress). Use force=true to restart."
+                                    }), 400
+
+                    if process_actually_running:
                         if force:
                             # Force mode: Stop a running simulation
                             logger.info(f"Force mode: Stop running simulation {simulation_id}")
@@ -2647,6 +2679,553 @@ def close_simulation_env():
         
     except Exception as e:
         logger.error(f"Failed to close environment: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+# ============== Scenario-based Generation API ==============
+
+@simulation_bp.route('/scenarios', methods=['GET'])
+def list_available_scenarios():
+    """List all available simulation scenarios
+
+    Return:
+        {
+            "success": true,
+            "data": [
+                {"name": "maxstream_worldcup", "description": "..."},
+                {"name": "capcut_bundle", "description": "..."}
+            ]
+        }"""
+    try:
+        from ..services.scenario_generator import ScenarioGenerator
+
+        scenarios = ScenarioGenerator.list_available_scenarios()
+        return jsonify({
+            "success": True,
+            "data": scenarios
+        })
+    except Exception as e:
+        logger.error(f"Failed to list scenarios: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@simulation_bp.route('/scenarios/<scenario_name>', methods=['GET'])
+def get_scenario_info(scenario_name: str):
+    """Get detailed info about a specific scenario including archetypes
+
+    Return:
+        {
+            "success": true,
+            "data": {
+                "name": "maxstream_worldcup",
+                "description": "...",
+                "archetypes": [...],
+                "demographics": {...}
+            }
+        }"""
+    try:
+        from ..services.scenario_generator import ScenarioGenerator
+
+        info = ScenarioGenerator.get_scenario_info(scenario_name)
+        if not info:
+            return jsonify({
+                "success": False,
+                "error": f"Scenario '{scenario_name}' not found"
+            }), 404
+
+        return jsonify({
+            "success": True,
+            "data": info
+        })
+    except Exception as e:
+        logger.error(f"Failed to get scenario info: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@simulation_bp.route('/scenarios/generate', methods=['POST'])
+def generate_scenario_profiles():
+    """Generate synthetic agent profiles from a scenario template
+
+    Request (JSON):
+        {
+            "scenario_name": "maxstream_worldcup",  // required
+            "total_agents": 100,                     // optional, default 100
+            "use_llm": true,                         // optional, default true
+            "parallel_count": 5,                     // optional, default 5
+            "platform": "reddit",                    // optional, "reddit" or "twitter"
+            "custom_params": {}                      // optional, scenario-specific overrides
+        }
+
+    Return:
+        {
+            "success": true,
+            "data": {
+                "scenario_name": "maxstream_worldcup",
+                "total_generated": 100,
+                "output_path": "...",
+                "output_dir": "..."
+            }
+        }"""
+    try:
+        from ..services.scenario_generator import ScenarioGenerator
+
+        data = request.get_json() or {}
+
+        scenario_name = data.get('scenario_name')
+        if not scenario_name:
+            return jsonify({
+                "success": False,
+                "error": "scenario_name is required"
+            }), 400
+
+        total_agents = data.get('total_agents', 100)
+        use_llm = data.get('use_llm', True)
+        parallel_count = data.get('parallel_count', 5)
+        platform = data.get('platform', 'reddit')
+        custom_params = data.get('custom_params')
+
+        generator = ScenarioGenerator()
+        result = generator.generate(
+            scenario_name=scenario_name,
+            total_agents=total_agents,
+            use_llm=use_llm,
+            parallel_count=parallel_count,
+            output_platform=platform,
+            custom_params=custom_params,
+        )
+
+        # Don't include profile objects in API response
+        result.pop('profiles', None)
+
+        return jsonify({
+            "success": True,
+            "data": result
+        })
+
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+    except Exception as e:
+        logger.error(f"Failed to generate scenario profiles: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@simulation_bp.route('/scenarios/generate-with-simulation', methods=['POST'])
+def generate_scenario_with_simulation():
+    """Generate profiles from scenario AND prepare full simulation
+
+    This combines scenario generation with SimulationManager to create
+    a complete simulation that can be run with the OASIS runner.
+
+    Request (JSON):
+        {
+            "scenario_name": "maxstream_worldcup",   // required
+            "project_id": "proj_xxxx",               // required
+            "total_agents": 100,                      // optional
+            "use_llm": true,                          // optional
+            "parallel_count": 5,                      // optional
+            "platform": "reddit",                     // optional
+            "simulation_requirement": "...",           // optional, for config generation
+            "custom_params": {}                       // optional
+        }
+
+    Return:
+        {
+            "success": true,
+            "data": {
+                "simulation_id": "sim_xxxx",
+                "scenario_name": "maxstream_worldcup",
+                "total_generated": 100,
+                "status": "ready"
+            }
+        }"""
+    try:
+        from ..services.scenario_generator import ScenarioGenerator
+
+        data = request.get_json() or {}
+
+        scenario_name = data.get('scenario_name')
+        project_id = data.get('project_id')
+
+        if not scenario_name:
+            return jsonify({
+                "success": False,
+                "error": "scenario_name is required"
+            }), 400
+
+        if not project_id:
+            return jsonify({
+                "success": False,
+                "error": "project_id is required"
+            }), 400
+
+        total_agents = data.get('total_agents', 100)
+        use_llm = data.get('use_llm', True)
+        parallel_count = data.get('parallel_count', 5)
+        platform = data.get('platform', 'reddit')
+        simulation_requirement = data.get('simulation_requirement', '')
+        custom_params = data.get('custom_params')
+
+        manager = SimulationManager()
+        result = manager.prepare_simulation_from_scenario(
+            project_id=project_id,
+            scenario_name=scenario_name,
+            total_agents=total_agents,
+            use_llm=use_llm,
+            parallel_count=parallel_count,
+            output_platform=platform,
+            simulation_requirement=simulation_requirement,
+            custom_params=custom_params,
+        )
+
+        return jsonify({
+            "success": True,
+            "data": result
+        })
+
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+    except Exception as e:
+        logger.error(f"Failed to generate scenario simulation: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+@simulation_bp.route('/scenarios/generate-full', methods=['POST'])
+def generate_scenario_full():
+    """Full end-to-end scenario generation with optional file upload
+
+    Accepts multipart/form-data with:
+        scenario_name: required
+        total_agents: optional (default 50)
+        use_llm: optional (default true)
+        parallel_count: optional (default 5)
+        platform: optional (default "reddit")
+        simulation_requirement: optional (simulation prompt text)
+        files: optional (PDF/MD/TXT documents for context)
+
+    Return:
+        {
+            "success": true,
+            "data": {
+                "scenario_name": "maxstream_worldcup",
+                "total_generated": 100,
+                "output_path": "...",
+                "document_text": "..." (if files uploaded)
+            }
+        }"""
+    try:
+        from ..services.scenario_generator import ScenarioGenerator
+        from ..utils.file_parser import FileParser
+        from ..services.text_processor import TextProcessor
+
+        scenario_name = request.form.get('scenario_name')
+        if not scenario_name:
+            return jsonify({
+                "success": False,
+                "error": "scenario_name is required"
+            }), 400
+
+        total_agents = int(request.form.get('total_agents', 50))
+        use_llm = request.form.get('use_llm', 'true').lower() == 'true'
+        parallel_count = int(request.form.get('parallel_count', 5))
+        platform = request.form.get('platform', 'reddit')
+        simulation_requirement = request.form.get('simulation_requirement', '')
+        language = request.form.get('language', 'id')
+
+        # Process uploaded files (optional)
+        document_text = ""
+        uploaded_files = request.files.getlist('files')
+        if uploaded_files and any(f.filename for f in uploaded_files):
+            import tempfile
+            for file in uploaded_files:
+                if file and file.filename:
+                    ext = file.filename.rsplit('.', 1)[-1].lower()
+                    if ext in Config.ALLOWED_EXTENSIONS:
+                        # Save to temp, extract text
+                        tmp_fd, tmp_path = tempfile.mkstemp(suffix=f'.{ext}')
+                        os.close(tmp_fd)
+                        try:
+                            file.save(tmp_path)
+                            text = FileParser.extract_text(tmp_path)
+                            text = TextProcessor.preprocess_text(text)
+                            document_text += f"\n\n=== {file.filename} ===\n{text}"
+                        finally:
+                            try:
+                                os.unlink(tmp_path)
+                            except OSError:
+                                pass
+
+        # Generate profiles
+        generator = ScenarioGenerator()
+        result = generator.generate(
+            scenario_name=scenario_name,
+            total_agents=total_agents,
+            use_llm=use_llm,
+            parallel_count=parallel_count,
+            output_platform=platform,
+            custom_params={"document_text": document_text} if document_text else None,
+        )
+
+        profiles = result.pop('profiles', [])
+
+        # Always create a simulation so the user can proceed to run it
+        import uuid
+
+        # Create a real project via ProjectManager so report generation can find it
+        from ..models.project import ProjectManager, ProjectStatus
+        project = ProjectManager.create_project(name=f"Scenario: {scenario_name}")
+        project.simulation_requirement = simulation_requirement or f"Scenario simulation: {scenario_name}"
+        project.status = ProjectStatus.GRAPH_COMPLETED
+        project.graph_id = f"scenario:{scenario_name}"
+        # Store language preference in project for report generation
+        project.chunk_size = 500  # default
+        project.analysis_summary = f"language:{language}"  # hack: store language in unused field
+        if document_text:
+            project.total_text_length = len(document_text)
+            ProjectManager.save_extracted_text(project.project_id, document_text)
+        ProjectManager.save_project(project)
+
+        project_id = project.project_id
+        simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
+        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, simulation_id)
+        os.makedirs(sim_dir, exist_ok=True)
+
+        # Copy profile files to simulation directory
+        import shutil
+        output_path = result.get('output_path', '')
+        if output_path and os.path.exists(output_path):
+            dest_filename = os.path.basename(output_path)
+            shutil.copy2(output_path, os.path.join(sim_dir, dest_filename))
+
+        # Copy metadata
+        metadata_path = result.get('metadata_path', '')
+        if metadata_path and os.path.exists(metadata_path):
+            shutil.copy2(metadata_path, os.path.join(sim_dir, 'scenario_metadata.json'))
+
+        # Generate a default simulation config so Step3 can run
+        from ..services.simulation_config_generator import (
+            SimulationParameters, TimeSimulationConfig, EventConfig,
+            PlatformConfig, AgentActivityConfig
+        )
+
+        time_config = TimeSimulationConfig(
+            total_simulation_hours=48,
+            minutes_per_round=60,
+            agents_per_hour_min=max(3, total_agents // 10),
+            agents_per_hour_max=max(10, total_agents // 3),
+            peak_hours=[19, 20, 21, 22, 23],
+            peak_activity_multiplier=1.5,
+        )
+
+        # Build agent configs from profiles
+        agent_configs = []
+        for i, p in enumerate(profiles):
+            if not p:
+                continue
+            agent_configs.append(AgentActivityConfig(
+                agent_id=i,
+                entity_uuid=f"scenario_{i}",
+                entity_name=p.name,
+                entity_type=p.source_entity_type or "ScenarioAgent",
+                activity_level=0.6,
+                posts_per_hour=1.0,
+                comments_per_hour=2.0,
+                active_hours=list(range(8, 24)),
+            ))
+
+        # Build initial posts and narrative using LLM to extract context from document
+        initial_posts = []
+        hot_topics = [scenario_name.replace('_', ' ')]
+        narrative_direction = simulation_requirement[:300] if simulation_requirement else ""
+
+        # If document provided, use LLM to generate context-aware seeds and narrative
+        if document_text and Config.LLM_API_KEY:
+            from openai import OpenAI as _OpenAI
+            try:
+                llm_client = _OpenAI(api_key=Config.LLM_API_KEY, base_url=Config.LLM_BASE_URL)
+
+                extract_prompt = f"""Kamu adalah analis yang mengekstrak konteks temporal dari dokumen untuk simulasi sosial media.
+
+DOKUMEN (dipotong max 4000 karakter):
+{document_text[:4000]}
+
+TUJUAN SIMULASI:
+{simulation_requirement[:500] if simulation_requirement else 'Simulasi perilaku pengguna'}
+
+TANGGAL HARI INI: {__import__('datetime').date.today().strftime('%d %B %Y')}
+
+Analisis dokumen dan hasilkan JSON:
+{{
+  "world_state": "Deskripsi LENGKAP situasi saat ini (max 300 kata). Jelaskan: fase turnamen saat ini, tim yang sudah tersingkir, pertandingan mendatang dengan jadwal spesifik (tanggal + jam WIB).",
+  "upcoming_matches": ["Daftar 5-10 pertandingan mendatang yang BELUM berlangsung, format: 'Tim1 vs Tim2 (Babak) - Tanggal, Jam WIB'"],
+  "seed_posts": ["3 postingan yang MEMAKSA agent untuk MEMILIH pertandingan spesifik mana yang akan mereka tonton. HARUS berupa pertanyaan polling/voting. Contoh BAIK: 'Dari jadwal mendatang: (1) Belgia vs Senegal 03:00 WIB, (2) Spanyol vs Austria 02:00 WIB, (3) Argentina vs Tanjung Verde 05:00 WIB — match mana yang pasti kalian tonton di Maxstream dan kenapa? Gue pribadi pilih #3 tapi jam-nya berat.' Contoh BURUK: 'Siapa yang suka nonton bola?' (terlalu umum)"],
+  "hot_topics": ["5-8 topik spesifik: nama tim mendatang, pemain bintang yang masih bertanding"],
+  "narrative_direction": "Instruksi TEGAS: 'Agent WAJIB menyebutkan NAMA PERTANDINGAN SPESIFIK yang akan mereka tonton. Agent WAJIB menyatakan alasan memilih match tersebut (jam tayang, tim favorit, bintang pemain, tingkat kepentingan). Agent DILARANG hanya membahas kebiasaan umum tanpa menyebut match spesifik. DAFTAR PERTANDINGAN MENDATANG: [list matches]. KONTEKS: [status temporal].'"
+}}
+
+KUNCI PENTING:
+- seed_posts HARUS berupa pertanyaan polling yang memaksa agent memilih dari match spesifik
+- seed_posts HARUS menyebutkan jadwal match mendatang (nama tim + jam WIB)
+- narrative_direction HARUS berisi daftar match mendatang agar agent bisa mereferensikannya
+- Fokus pada pertandingan yang BELUM TERJADI saja
+- Bahasa: {'Bahasa Indonesia' if language == 'id' else 'English' if language == 'en' else '中文'}"""
+
+                extract_response = llm_client.chat.completions.create(
+                    model=Config.LLM_MODEL_NAME,
+                    messages=[
+                        {"role": "system", "content": "You are a temporal context analyst. Extract the CURRENT STATE of events from documents. Always determine: is the event past/ongoing/future? Return valid JSON only."},
+                        {"role": "user", "content": extract_prompt}
+                    ],
+                    temperature=0.3,
+                )
+                import json as _json
+                extract_content = extract_response.choices[0].message.content
+                json_match = __import__('re').search(r'\{[\s\S]*\}', extract_content)
+                if json_match:
+                    extracted = _json.loads(json_match.group())
+                    seed_contents = extracted.get("seed_posts", [])[:3]
+                    hot_topics = extracted.get("hot_topics", hot_topics)[:10]
+                    # Combine world_state + upcoming_matches + narrative_direction
+                    world_state = extracted.get("world_state", "")
+                    upcoming_matches = extracted.get("upcoming_matches", [])
+                    extracted_narrative = extracted.get("narrative_direction", "")
+                    from datetime import datetime as _dt
+                    current_time = _dt.now().strftime("%d %B %Y, %H:%M WIB")
+
+                    matches_list = "\n".join(f"  • {m}" for m in upcoming_matches[:10]) if upcoming_matches else "Tidak ada data"
+
+                    narrative_direction = (
+                        f"TANGGAL DAN WAKTU SAAT INI: {current_time}\n\n"
+                        f"WORLD STATE: {world_state}\n\n"
+                        f"PERTANDINGAN MENDATANG (agent WAJIB memilih dari daftar ini):\n{matches_list}\n\n"
+                        f"INSTRUKSI: {extracted_narrative}\n\n"
+                        f"ATURAN WAJIB:\n"
+                        f"1. Agent WAJIB menyebut NAMA PERTANDINGAN SPESIFIK dari daftar di atas yang akan mereka tonton.\n"
+                        f"2. Agent WAJIB menyatakan ALASAN memilih match tersebut (jam tayang cocok/tidak, tim favorit, pemain bintang, dll).\n"
+                        f"3. Agent DILARANG hanya membahas kebiasaan umum tanpa menyebut match spesifik.\n"
+                        f"4. Agent DILARANG membahas pertandingan yang tanggalnya SEBELUM {current_time} (sudah selesai).\n"
+                        f"5. Respon agent harus berupa KEPUTUSAN: 'Gue pasti nonton X vs Y karena...' atau 'Gue skip A vs B karena...'"
+                    )
+                    logger.info(f"LLM extracted context: {len(seed_contents)} seeds, {len(hot_topics)} topics, {len(upcoming_matches)} matches")
+                else:
+                    seed_contents = []
+            except Exception as e:
+                logger.warning(f"LLM context extraction failed, using fallback: {str(e)[:100]}")
+                seed_contents = []
+        else:
+            seed_contents = []
+
+        # Fallback seed posts if LLM extraction failed or no document
+        if not seed_contents:
+            seed_contents = [
+                f"Hai semua! Ada yang mau diskusi tentang {scenario_name.replace('_', ' ')}?",
+                f"Menurut kalian gimana perkembangan terbaru soal {scenario_name.replace('_', ' ')}?",
+            ]
+
+        for i, content in enumerate(seed_contents[:3]):
+            poster_id = i % len(profiles) if profiles else 0
+            initial_posts.append({
+                "poster_agent_id": poster_id,
+                "content": content,
+                "topic": scenario_name.replace('_', ' '),
+            })
+
+        event_config = EventConfig(
+            initial_posts=initial_posts,
+            hot_topics=hot_topics,
+            narrative_direction=narrative_direction,
+        )
+
+        reddit_config = PlatformConfig(platform="reddit") if platform == "reddit" else None
+        twitter_config = PlatformConfig(platform="twitter") if platform == "twitter" else None
+
+        sim_params = SimulationParameters(
+            simulation_id=simulation_id,
+            project_id=project_id,
+            graph_id=f"scenario:{scenario_name}",
+            simulation_requirement=simulation_requirement or f"Scenario simulation: {scenario_name}",
+            time_config=time_config,
+            agent_configs=agent_configs,
+            event_config=event_config,
+            reddit_config=reddit_config,
+            twitter_config=twitter_config,
+            llm_model=Config.LLM_MODEL_NAME,
+            llm_base_url=Config.LLM_BASE_URL,
+            generation_reasoning=f"Auto-generated config for scenario: {scenario_name}",
+        )
+
+        config_path = os.path.join(sim_dir, "simulation_config.json")
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(sim_params.to_json())
+
+        # Create simulation state
+        manager = SimulationManager()
+        from ..services.simulation_manager import SimulationState
+        state = SimulationState(
+            simulation_id=simulation_id,
+            project_id=project_id,
+            graph_id=f"scenario:{scenario_name}",
+            enable_twitter=(platform == "twitter"),
+            enable_reddit=(platform == "reddit"),
+            status=SimulationStatus.READY,
+        )
+        state.profiles_count = result.get('total_generated', 0)
+        state.entities_count = total_agents
+        state.entity_types = [f"scenario:{scenario_name}"]
+        state.config_generated = True
+        state.config_reasoning = f"Auto-generated for scenario: {scenario_name}"
+        manager._save_simulation_state(state)
+
+        # Add simulation info to result
+        result['simulation_id'] = simulation_id
+
+        # Add document info
+        if document_text:
+            result['document_uploaded'] = True
+            result['document_length'] = len(document_text)
+
+        # Add simulation requirement info
+        if simulation_requirement:
+            result['simulation_requirement'] = simulation_requirement
+
+        return jsonify({
+            "success": True,
+            "data": result
+        })
+
+    except ValueError as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 400
+
+    except Exception as e:
+        logger.error(f"Failed to generate full scenario: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e),

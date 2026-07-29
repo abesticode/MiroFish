@@ -883,39 +883,110 @@ class ReportAgent:
     MAX_TOOL_CALLS_PER_CHAT = 2
     
     def __init__(
-        self, 
+        self,
         graph_id: str,
         simulation_id: str,
         simulation_requirement: str,
         llm_client: Optional[LLMClient] = None,
-        zep_tools: Optional[ZepToolsService] = None
+        zep_tools: Optional[ZepToolsService] = None,
+        document_text: str = "",
+        language: str = "id"
     ):
         """
         Initialize Report Agent
-        
+
         Args:
             graph_id: graph ID
             simulation_id: simulation ID
             simulation_requirement: simulation requirement description
             llm_client: LLM client (optional)
             zep_tools: Zep tool service (optional)
+            document_text: uploaded document text for context (optional)
+            language: output language (id/en/zh)
         """
         self.graph_id = graph_id
         self.simulation_id = simulation_id
         self.simulation_requirement = simulation_requirement
-        
+        self.document_text = document_text
+        self.language = language
+
         self.llm = llm_client or LLMClient()
         self.zep_tools = zep_tools or ZepToolsService()
-        
+
+        # For scenario-based sims, pre-load simulation posts as context
+        self._simulation_posts_cache = None
+
         # Tool definition
         self.tools = self._define_tools()
-        
+
         # Logger (initialized in generate_report)
         self.report_logger: Optional[ReportLogger] = None
         # Console logger (initialized in generate_report)
         self.console_logger: Optional[ReportConsoleLogger] = None
         
         logger.info(t('report.agentInitDone', graphId=graph_id, simulationId=simulation_id))
+
+    def _get_simulation_posts_context(self, limit: int = 50) -> str:
+        """Load actual simulation posts from SQLite DB for report context."""
+        if self._simulation_posts_cache is not None:
+            return self._simulation_posts_cache
+
+        import os
+        import sqlite3
+        from ..config import Config
+
+        sim_dir = os.path.join(Config.OASIS_SIMULATION_DATA_DIR, self.simulation_id)
+        db_path = os.path.join(sim_dir, "reddit_simulation.db")
+        if not os.path.exists(db_path):
+            db_path = os.path.join(sim_dir, "twitter_simulation.db")
+        if not os.path.exists(db_path):
+            self._simulation_posts_cache = ""
+            return ""
+
+        try:
+            conn = sqlite3.connect(db_path)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT * FROM post ORDER BY created_at DESC LIMIT ?", (limit,))
+            posts = [dict(row) for row in cursor.fetchall()]
+
+            # Also get comments
+            cursor.execute("SELECT * FROM comment ORDER BY created_at DESC LIMIT ?", (limit,))
+            comments = [dict(row) for row in cursor.fetchall()]
+
+            conn.close()
+
+            parts = []
+            if posts:
+                parts.append(f"=== SIMULATION POSTS ({len(posts)} posts) ===")
+                for p in posts[:30]:
+                    user_name = p.get('user_name', p.get('poster_name', 'Agent'))
+                    content = p.get('content', p.get('body', ''))[:200]
+                    parts.append(f"- [{user_name}]: {content}")
+
+            if comments:
+                parts.append(f"\n=== SIMULATION COMMENTS ({len(comments)} comments) ===")
+                for c in comments[:20]:
+                    user_name = c.get('user_name', c.get('commenter_name', 'Agent'))
+                    content = c.get('content', c.get('body', ''))[:150]
+                    parts.append(f"- [{user_name}]: {content}")
+
+            self._simulation_posts_cache = "\n".join(parts)
+            return self._simulation_posts_cache
+        except Exception as e:
+            logger.warning(f"Failed to load simulation posts: {e}")
+            self._simulation_posts_cache = ""
+            return ""
+
+    def _get_language_instruction(self) -> str:
+        """Get language instruction based on configured language."""
+        lang_map = {
+            "id": "WAJIB: Tulis seluruh report dalam Bahasa Indonesia. Semua judul, konten, dan analisis harus dalam Bahasa Indonesia.",
+            "en": "Write the entire report in English.",
+            "zh": "请用中文撰写整篇报告。",
+        }
+        return lang_map.get(self.language, lang_map["id"])
     
     def _define_tools(self) -> Dict[str, Dict[str, Any]]:
         """Define available tools"""
@@ -967,8 +1038,20 @@ class ReportAgent:
             Tool execution results (text format)
         """
         logger.info(t('report.executingTool', toolName=tool_name, params=parameters))
-        
+
         try:
+            # For scenario-based simulations, Zep graph tools return helpful context instead of 404
+            is_scenario = self.graph_id and self.graph_id.startswith("scenario:")
+            zep_dependent_tools = ["insight_forge", "panorama_search", "quick_search", "search_graph", "get_graph_statistics", "get_entity_summary"]
+
+            if is_scenario and tool_name in zep_dependent_tools:
+                return (
+                    f"[This is a scenario-based simulation without a knowledge graph. "
+                    f"Graph tool '{tool_name}' is not available. "
+                    f"Use 'get_simulation_posts' or 'interview_agents' to analyze simulation results instead. "
+                    f"Simulation requirement: {self.simulation_requirement[:200]}]"
+                )
+
             if tool_name == "insight_forge":
                 query = parameters.get("query", "")
                 ctx = parameters.get("report_context", "") or report_context
@@ -1151,28 +1234,73 @@ class ReportAgent:
             ReportOutline: report outline
         """
         logger.info(t('report.startPlanningOutline'))
-        
+
         if progress_callback:
             progress_callback("planning", 0, t('progress.analyzingRequirements'))
-        
-        # First get the simulation context
-        context = self.zep_tools.get_simulation_context(
-            graph_id=self.graph_id,
-            simulation_requirement=self.simulation_requirement
-        )
+
+        # For scenario-based simulations, skip Zep graph query
+        is_scenario = self.graph_id and self.graph_id.startswith("scenario:")
+        if is_scenario:
+            # Build context from document + actual simulation posts
+            sim_posts = self._get_simulation_posts_context(limit=50)
+            context = {
+                "graph_statistics": {
+                    "total_nodes": 0,
+                    "total_edges": 0,
+                    "entity_types": {}
+                },
+                "total_entities": 0,
+                "related_facts": [],
+            }
+            # Override the template with richer context for scenario sims
+            lang_instruction = self._get_language_instruction()
+            system_prompt = f"""{PLAN_SYSTEM_PROMPT}
+
+{lang_instruction}"""
+
+            # Build user prompt with actual data
+            doc_context = self.document_text[:2000] if self.document_text else "Tidak ada dokumen pendukung."
+            user_prompt = f"""[Prediction scene settings]
+Variables we inject into the simulation world (simulation requirements): {self.simulation_requirement}
+
+[Reference Document / Real-world Data]
+{doc_context}
+
+[Actual Simulation Results - Posts and Comments from Agents]
+{sim_posts[:3000] if sim_posts else "Belum ada data interaksi."}
+
+Please look at this future preview from a "God's perspective":
+1. Based on the ACTUAL simulation posts above, what predictions emerge?
+2. How do various groups of people (Agents) react and act?
+3. What future trends does this simulation reveal that are worthy of attention?
+
+IMPORTANT:
+- Base your analysis ONLY on the actual simulation posts data above
+- Do NOT invent data that is not in the simulation results
+- {lang_instruction}
+
+Based on the prediction results, design the most appropriate report chapter structure.
+[Remind again] Number of report chapters: minimum 2, maximum 5."""
+
+        else:
+            context = self.zep_tools.get_simulation_context(
+                graph_id=self.graph_id,
+                simulation_requirement=self.simulation_requirement
+            )
         
         if progress_callback:
             progress_callback("planning", 30, t('progress.generatingOutline'))
-        
-        system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{get_language_instruction()}"
-        user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
-            simulation_requirement=self.simulation_requirement,
-            total_nodes=context.get('graph_statistics', {}).get('total_nodes', 0),
-            total_edges=context.get('graph_statistics', {}).get('total_edges', 0),
-            entity_types=list(context.get('graph_statistics', {}).get('entity_types', {}).keys()),
-            total_entities=context.get('total_entities', 0),
-            related_facts_json=json.dumps(context.get('related_facts', [])[:10], ensure_ascii=False, indent=2),
-        )
+
+        if not is_scenario:
+            system_prompt = f"{PLAN_SYSTEM_PROMPT}\n\n{get_language_instruction()}"
+            user_prompt = PLAN_USER_PROMPT_TEMPLATE.format(
+                simulation_requirement=self.simulation_requirement,
+                total_nodes=context.get('graph_statistics', {}).get('total_nodes', 0),
+                total_edges=context.get('graph_statistics', {}).get('total_edges', 0),
+                entity_types=list(context.get('graph_statistics', {}).get('entity_types', {}).keys()),
+                total_entities=context.get('total_entities', 0),
+                related_facts_json=json.dumps(context.get('related_facts', [])[:10], ensure_ascii=False, indent=2),
+            )
 
         try:
             response = self.llm.chat_json(
@@ -1260,7 +1388,30 @@ class ReportAgent:
             section_title=section.title,
             tools_description=self._get_tools_description(),
         )
-        system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
+
+        # For scenario sims, inject language + data context directly into system prompt
+        is_scenario = self.graph_id and self.graph_id.startswith("scenario:")
+        if is_scenario:
+            lang_instruction = self._get_language_instruction()
+            sim_posts = self._get_simulation_posts_context(limit=50)
+            doc_excerpt = self.document_text[:1500] if self.document_text else ""
+
+            scenario_context = f"""
+{lang_instruction}
+
+IMPORTANT: You are writing a report for a SCENARIO-BASED simulation. Graph search tools are NOT available.
+Instead, use the ACTUAL simulation data provided below to write your analysis. Do NOT make up data.
+
+=== REFERENCE DOCUMENT (uploaded by user) ===
+{doc_excerpt if doc_excerpt else "No document provided."}
+
+=== ACTUAL AGENT INTERACTIONS FROM SIMULATION ===
+{sim_posts[:2500] if sim_posts else "No simulation posts available."}
+
+Base ALL your analysis, quotes, and predictions ONLY on the data above. Never invent match results or team names not in the data."""
+            system_prompt = f"{system_prompt}\n\n{scenario_context}"
+        else:
+            system_prompt = f"{system_prompt}\n\n{get_language_instruction()}"
 
         # Build user prompt - pass in a maximum of 4000 words for each completed chapter
         if previous_sections:

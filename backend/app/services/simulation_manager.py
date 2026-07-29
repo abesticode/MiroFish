@@ -459,6 +459,170 @@ class SimulationManager:
     def get_simulation(self, simulation_id: str) -> Optional[SimulationState]:
         """Get simulation status"""
         return self._load_simulation_state(simulation_id)
+
+    def prepare_simulation_from_scenario(
+        self,
+        project_id: str,
+        scenario_name: str,
+        total_agents: int = 100,
+        use_llm: bool = True,
+        parallel_count: int = 5,
+        output_platform: str = "reddit",
+        simulation_requirement: str = "",
+        custom_params: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[callable] = None,
+    ) -> Dict[str, Any]:
+        """
+        Prepare a simulation using scenario-based synthetic population generation.
+
+        Instead of reading entities from Zep graph, this generates agents from
+        predefined scenario templates with demographic distributions.
+
+        Args:
+            project_id: project ID
+            scenario_name: registered scenario name (e.g. "maxstream_worldcup")
+            total_agents: number of agents to generate
+            use_llm: whether to use LLM for detailed persona
+            parallel_count: parallel generation count
+            output_platform: "reddit" or "twitter"
+            simulation_requirement: requirement text for config generation
+            custom_params: scenario-specific parameter overrides
+            progress_callback: progress callback(stage, progress, message)
+
+        Returns:
+            Dict with simulation_id, scenario info, and status
+        """
+        import uuid
+        from .scenario_generator import ScenarioGenerator
+
+        simulation_id = f"sim_{uuid.uuid4().hex[:12]}"
+
+        # Create simulation state
+        state = SimulationState(
+            simulation_id=simulation_id,
+            project_id=project_id,
+            graph_id=f"scenario:{scenario_name}",
+            enable_twitter=(output_platform == "twitter"),
+            enable_reddit=(output_platform == "reddit"),
+            status=SimulationStatus.PREPARING,
+        )
+        self._save_simulation_state(state)
+
+        try:
+            sim_dir = self._get_simulation_dir(simulation_id)
+
+            if progress_callback:
+                progress_callback("generating_profiles", 0, f"Starting scenario: {scenario_name}")
+
+            # Generate profiles using ScenarioGenerator
+            generator = ScenarioGenerator()
+
+            def profile_progress(current, total, msg):
+                if progress_callback:
+                    progress_callback(
+                        "generating_profiles",
+                        int(current / total * 100),
+                        msg,
+                        current=current,
+                        total=total,
+                    )
+
+            # Determine output file path
+            if output_platform == "twitter":
+                output_path = os.path.join(sim_dir, "twitter_profiles.csv")
+            else:
+                output_path = os.path.join(sim_dir, "reddit_profiles.json")
+
+            result = generator.generate(
+                scenario_name=scenario_name,
+                total_agents=total_agents,
+                use_llm=use_llm,
+                parallel_count=parallel_count,
+                output_dir=sim_dir,
+                output_platform=output_platform,
+                progress_callback=profile_progress,
+                custom_params=custom_params,
+            )
+
+            profiles = result.get("profiles", [])
+            state.profiles_count = len([p for p in profiles if p])
+            state.entities_count = total_agents
+            state.entity_types = [f"scenario:{scenario_name}"]
+
+            if progress_callback:
+                progress_callback(
+                    "generating_profiles", 100,
+                    f"Generated {state.profiles_count} profiles",
+                    current=state.profiles_count,
+                    total=total_agents,
+                )
+
+            # Generate simulation config if requirement is provided
+            if simulation_requirement:
+                if progress_callback:
+                    progress_callback("generating_config", 0, "Generating simulation config...")
+
+                from .simulation_config_generator import SimulationConfigGenerator
+                config_generator = SimulationConfigGenerator()
+
+                # Build minimal entity list for config generator
+                from .zep_entity_reader import EntityNode
+                pseudo_entities = []
+                for p in profiles:
+                    if p:
+                        pseudo_entities.append(EntityNode(
+                            uuid=f"scenario_{p.user_id}",
+                            name=p.name,
+                            labels=[p.source_entity_type or "ScenarioAgent"],
+                            summary=p.bio,
+                            attributes={"profession": p.profession, "age": p.age},
+                        ))
+
+                sim_params = config_generator.generate_config(
+                    simulation_id=simulation_id,
+                    project_id=project_id,
+                    graph_id=f"scenario:{scenario_name}",
+                    simulation_requirement=simulation_requirement,
+                    document_text=f"Scenario: {scenario_name}. {result.get('scenario_name', '')}",
+                    entities=pseudo_entities,
+                    enable_twitter=state.enable_twitter,
+                    enable_reddit=state.enable_reddit,
+                )
+
+                config_path = os.path.join(sim_dir, "simulation_config.json")
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    f.write(sim_params.to_json())
+
+                state.config_generated = True
+                state.config_reasoning = sim_params.generation_reasoning
+
+                if progress_callback:
+                    progress_callback("generating_config", 100, "Config generation complete")
+
+            state.status = SimulationStatus.READY
+            self._save_simulation_state(state)
+
+            logger.info(
+                f"Scenario simulation prepared: {simulation_id}, "
+                f"scenario={scenario_name}, profiles={state.profiles_count}"
+            )
+
+            return {
+                "simulation_id": simulation_id,
+                "scenario_name": scenario_name,
+                "total_generated": state.profiles_count,
+                "status": state.status.value,
+                "output_dir": sim_dir,
+            }
+
+        except Exception as e:
+            logger.error(f"Scenario simulation preparation failed: {simulation_id}, error={str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            state.status = SimulationStatus.FAILED
+            state.error = str(e)
+            self._save_simulation_state(state)
+            raise
     
     def list_simulations(self, project_id: Optional[str] = None) -> List[SimulationState]:
         """List all simulations"""

@@ -185,3 +185,36 @@ export const getSimulationHistory = (limit = 20) => {
   return service.get('/api/simulation/history', { params: { limit } })
 }
 
+// ============== Scenario-based Generation API ==============
+
+/**
+ * List available simulation scenarios
+ */
+export const listScenarios = () => {
+  return service.get('/api/simulation/scenarios')
+}
+
+/**
+ * Get detailed info about a scenario
+ * @param {string} scenarioName
+ */
+export const getScenarioInfo = (scenarioName) => {
+  return service.get(`/api/simulation/scenarios/${scenarioName}`)
+}
+
+/**
+ * Generate profiles from a scenario template
+ * @param {Object} data - { scenario_name, total_agents, use_llm, parallel_count, platform, custom_params }
+ */
+export const generateScenarioProfiles = (data) => {
+  return requestWithRetry(() => service.post('/api/simulation/scenarios/generate', data), 2, 2000)
+}
+
+/**
+ * Generate profiles + prepare full simulation from scenario
+ * @param {Object} data - { scenario_name, project_id, total_agents, use_llm, platform, simulation_requirement, custom_params }
+ */
+export const generateScenarioWithSimulation = (data) => {
+  return requestWithRetry(() => service.post('/api/simulation/scenarios/generate-with-simulation', data), 2, 2000)
+}
+

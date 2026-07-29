@@ -36,6 +36,17 @@ from .simulation_ipc import (
     CommandType,
     CommandStatus
 )
+from .scenario_generator import ScenarioGenerator
+from .scenarios import (
+    SimulationScenario,
+    Archetype,
+    DemographicDistribution,
+    SCENARIO_REGISTRY,
+    get_scenario,
+    list_scenarios,
+    MaxstreamWorldCupScenario,
+    CapCutBundleScenario,
+)
 
 __all__ = [
     'OntologyGenerator', 
@@ -69,5 +80,14 @@ __all__ = [
     'IPCResponse',
     'CommandType',
     'CommandStatus',
+    'ScenarioGenerator',
+    'SimulationScenario',
+    'Archetype',
+    'DemographicDistribution',
+    'SCENARIO_REGISTRY',
+    'get_scenario',
+    'list_scenarios',
+    'MaxstreamWorldCupScenario',
+    'CapCutBundleScenario',
 ]
 

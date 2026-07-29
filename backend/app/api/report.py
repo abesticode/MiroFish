@@ -132,10 +132,19 @@ def generate_report():
                 )
                 
                 # Create Report Agent
+                # Determine language: from project metadata or browser locale
+                report_language = 'id'
+                if project.analysis_summary and project.analysis_summary.startswith('language:'):
+                    report_language = project.analysis_summary.replace('language:', '').strip()
+                elif current_locale in ('id', 'en', 'zh'):
+                    report_language = current_locale
+
                 agent = ReportAgent(
                     graph_id=graph_id,
                     simulation_id=simulation_id,
-                    simulation_requirement=simulation_requirement
+                    simulation_requirement=simulation_requirement,
+                    document_text=ProjectManager.get_extracted_text(state.project_id) or "",
+                    language=report_language
                 )
                 
                 # Progress callback
@@ -529,7 +538,9 @@ def chat_with_report_agent():
         agent = ReportAgent(
             graph_id=graph_id,
             simulation_id=simulation_id,
-            simulation_requirement=simulation_requirement
+            simulation_requirement=simulation_requirement,
+            document_text=ProjectManager.get_extracted_text(state.project_id) or "",
+            language=get_locale() if get_locale() in ('id', 'en', 'zh') else 'id'
         )
         
         result = agent.chat(message=message, chat_history=chat_history)

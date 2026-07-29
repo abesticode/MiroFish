@@ -179,13 +179,21 @@
             </div>
 
             <div class="console-section btn-section">
-              <button 
+              <button
                 class="start-engine-btn"
                 @click="startSimulation"
                 :disabled="!canSubmit || loading"
               >
                 <span v-if="!loading">Start Engine</span>
                 <span v-else>Initializing...</span>
+                <span class="btn-arrow">→</span>
+              </button>
+
+              <button
+                class="scenario-btn"
+                @click="$router.push('/scenario')"
+              >
+                <span>Custom Scenario Generator</span>
                 <span class="btn-arrow">→</span>
               </button>
             </div>
@@ -661,6 +669,30 @@ const startSimulation = () => {
   0% { box-shadow: 0 0 0 0 rgba(0,0,0,0.2); }
   70% { box-shadow: 0 0 0 6px rgba(0,0,0,0); }
   100% { box-shadow: 0 0 0 0 rgba(0,0,0,0); }
+}
+
+.scenario-btn {
+  width: 100%;
+  background: transparent;
+  color: #000000;
+  border: 1px solid #E5E5E5;
+  padding: 16px 20px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  font-size: 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  letter-spacing: 0.5px;
+  margin-top: 10px;
+}
+
+.scenario-btn:hover {
+  border-color: #FF4500;
+  color: #FF4500;
+  background: #FFF8F5;
 }
 
 @media (max-width: 1024px) {
